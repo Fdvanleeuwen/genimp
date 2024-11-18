@@ -1,0 +1,291 @@
+---
+title: "Some simple GANs in R"
+author: "Thom Benjamin Volker"
+format: html
+---
+
+Generative adversarial networks (GANs) are a class of machine learning models that can be used to generate synthetic data. To do this, it transforms random noise into data that is similar to the training data. GANs consist of two neural networks: a generator and a discriminator. The generator takes random noise as input and transforms it into synthetic data, while the discriminator tries to distinguish between real and synthetic data. The two networks are trained simultaneously, in a zero-sum game: if the generator generates more realistic synthetic data, the discriminator has more difficulty distinguishing between the real and synthetic data.
+
+```{r}
+#| echo: false
+# create graph for GAN with graphviz
+DiagrammeR::grViz("digraph {
+  graph [layour = dot, rankdir = LR]
+  
+  node [shape = rectangle, style = filled, fillcolor = lightblue]
+  N1 [label = 'Random noise']
+  N2 [label = 'Generator']
+  N3 [label = 'Synthetic data']
+  N4 [label = 'Discriminator']
+
+  N1 -> N2 -> N3 -> N4 -> N2
+}")
+```
+
+
+
+# Simple univariate GANs
+
+Let's create a GAN using `keras` and `tensorflow` in `R`. We will use a very simple dataset, consisting of only a single variable that is normally distributed with mean $\mu = 2$ and standard deviation $\sigma = 4$. The generator will be a simple linear model, and the discriminator will be a simple feedforward neural network with a single hidden layer.
+
+## Preliminaries
+
+First, we load the required packages and generate some training data that we want to synthesize. We generate $n = 1000$ samples from a normal distribution with mean $\mu = 2$ and standard deviation $\sigma = 4$.
+
+
+``` {r}
+
+library(keras3)
+library(tensorflow)
+
+set.seed(123)
+set_random_seed(123)
+
+N <- 1000
+train_dat <- matrix(rnorm(N, 2, 4))
+
+plot(density(train_dat))
+curve(dnorm(x, 2, 4), add = TRUE, lty = 2)
+```
+
+## A very simple GAN
+
+To generate synthetic data, we define a very simple GAN, using a generator that is a simple linear model, and a discriminator that is a model equivalent to a logistic regression model. We define the generator and discriminator as functions that return the respective models. We then define the GAN as a new model class.
+
+### Generator
+
+The generator consists of only an output layer with a single unit and a linear activation function. 
+
+```{r}
+generator <- function(latent_dim = 1) {
+  model <- keras_model_sequential(input_shape = latent_dim, name = "seq_gen") |> 
+    layer_dense(units = 1, activation = "linear")
+}
+
+summary(generator())
+```
+
+### Discriminator
+
+The discriminator also consists of only an output layer with a single unit, but with a sigmoid activation function.
+
+```{r}
+discriminator <- function(dim = 1) {
+  model <- keras_model_sequential(input_shape = dim, name = "seq_disc") |> 
+    layer_dense(units = 64, activation = "relu") |>
+    layer_dense(units = 1, activation = "sigmoid")
+}
+
+summary(discriminator())
+```
+
+### Defining a GAN model class
+
+Now we have everything in place, we can define a new model class which collects the generator, discriminator and additional hyperparameters. We also define the training step for the GAN.
+
+
+```{r}
+gan <- new_model_class(
+  classname = "GAN",
+  # initialize model with generator, discriminator, dimension
+  # of the random latent vectors (i.e., the input that is 
+  # transformed by the generator to yield useful synthetic 
+  # data).
+  initialize = function(discriminator, generator, latent_dim) {
+    super$initialize()
+    self$discriminator <- discriminator
+    self$generator <- generator
+    self$latent_dim <- latent_dim
+    self$d_loss_metric <- metric_mean(name = "d_loss")
+    self$g_loss_metric <- metric_mean(name = "g_loss")
+  },
+  # create compile function that sets the optimizers and loss
+  compile = function(d_optimizer, g_optimizer, loss_fn) {
+    super$compile()
+    self$d_optimizer <- d_optimizer
+    self$g_optimizer <- g_optimizer
+    self$loss_fn <- loss_fn
+  },
+  # plot generator and discriminator loss during training
+  metrics = mark_active(function() {
+    list(self$d_loss_metric, self$g_loss_metric)
+  }),
+  # define the training step, set batch size, create random normal variates
+  # as input for the generator, stack real and generated data, create labels
+  # for the discriminator, add some noise to the labels to prevent overfitting,
+  # compute discriminator loss, compute gradients, apply gradients to the
+  # discriminator.
+  train_step = function(real_data) {
+    batch_size <- tf$shape(real_data)[1]
+    random_latent_vectors <- tf$random$normal(shape = c(batch_size, self$latent_dim))
+    generated_data <- self$generator(random_latent_vectors)
+    combined_data <- tf$concat(list(generated_data, real_data), axis = 0L)
+    labels <- tf$concat(list(tf$ones(tuple(batch_size, 1L)),
+                             tf$zeros(tuple(batch_size, 1L))), axis = 0L)
+    labels <- labels + tf$random$uniform(tf$shape(labels), maxval = 0.01)
+    
+    with(tf$GradientTape() %as% tape, {
+      predictions <- self$discriminator(combined_data)
+      d_loss <- self$loss_fn(labels, predictions)
+    })
+    
+    grads <- tape$gradient(d_loss, self$discriminator$trainable_weights)
+    
+    self$d_optimizer$apply_gradients(
+      zip_lists(grads, self$discriminator$trainable_weights)
+    )
+    
+    # Then sample new random points in latent space, and create labels as if all
+    # these new samples were real so that only the generator is trained, and not
+    # the discriminator. Then the generator loss is computed, and the generator 
+    # weights are updated. 
+    
+    random_latent_vectors <- tf$random$normal(shape = c(batch_size, self$latent_dim))
+    misleading_labels <- tf$zeros(tuple(batch_size, 1L))
+    with(tf$GradientTape() %as% tape, {
+      predictions <- random_latent_vectors |>
+        self$generator() |>
+        self$discriminator()
+      g_loss <- self$loss_fn(misleading_labels, predictions)
+    })
+    
+    grads <- tape$gradient(g_loss, self$generator$trainable_weights)
+    self$g_optimizer$apply_gradients(
+      zip_lists(grads, self$generator$trainable_weights)
+    )
+    
+    self$d_loss_metric$update_state(d_loss)
+    self$g_loss_metric$update_state(g_loss)
+    list(d_loss = self$d_loss_metric$result(),
+         g_loss = self$g_loss_metric$result())
+  }
+)
+```
+
+### Training the GAN
+
+We assemble all pieces and train the GAN. We use a simple standard normal distribution $\mathcal{N}(0, 1)$ as the latent input data for the generator. We first train the GAN for 250 epochs, and store the result after every twentieth epoch.
+
+
+```{r}
+latent_dim <- as.integer(1)
+nsyn <- nrow(train_dat)
+
+mod <- gan(
+  discriminator = discriminator(dim = ncol(train_dat)), 
+  generator = generator(latent_dim = latent_dim), 
+  latent_dim = latent_dim
+)
+
+mod |>
+  compile(
+    d_optimizer = optimizer_adam(beta_1 = 0.5),
+    g_optimizer = optimizer_adam(beta_1 = 0.5),
+    loss_fn = loss_binary_crossentropy()
+  )
+
+plot(
+  density(train_dat), 
+  ylim = c(0, 0.2), 
+  xlim = c(-12, 16), 
+  col = "darkorange2",
+  xlab = "x",
+  main = "GAN Training"
+)
+
+curve(dnorm(x, 2, 4), add = TRUE)
+curve(dnorm(x, 0, 1), add = TRUE, col = "black", lty=2)
+
+for (i in 1:5) {
+  mod |>
+    fit(train_dat, epochs = 30, batch_size = 32, verbose = 0)
+  newdat <- mod$generator(tf$random$normal(shape = c(nsyn, latent_dim)))
+  lines(density(as.matrix(newdat)), 
+        col = RColorBrewer::brewer.pal(7, "Greens")[i])
+}
+
+```
+
+The figure shows the density of the training data (orange), the true data generating distribution (black line), the distribution of the random input vectors (black dashed line), and the generated data after 30, 60, 90, 120 and 150 epochs of training (green lines). The generator comes increasingly close to the true data generating distribution.
+
+
+## A normal mixture GAN
+
+In this example, we will use a more complex data generating distribution. We will use a mixture of two normal distributions with means $\mu_1 = 2$ and $\mu_2 = 8$, and standard deviations $\sigma_1 = 1$ and $\sigma_2 = 2$. The data generating distribution is then given by
+$$
+f(x) = 0.5 \cdot \mathcal{N}(x; 2, 1) + 0.5 \cdot \mathcal{N}(x; 8, 2).
+$$
+
+```{r}
+mixture <- rbinom(N, 1, 0.5)
+train_dat <- matrix(mixture * rnorm(N, 2, 1) + (1 - mixture) * rnorm(N, 8, 2))
+
+plot(density(train_dat), ylim = c(0, 0.2))
+curve(0.5 * dnorm(x, 2, 1) + 0.5 * dnorm(x, 8, 2), add = TRUE, lty = 2)
+```
+
+We can now train the GAN on this data generating distribution. We slightly change the generator and discriminator architectures to allow for a more complex data generating distribution. We also increase the number of epochs to 500.
+
+```{r}
+generator <- function(latent_dim = 1) {
+  model <- keras_model_sequential(input_shape = latent_dim, name = "seq_gen") |> 
+    layer_dense(units = 16, activation = "relu") |>
+    layer_dense(units = 1, activation = "linear")
+}
+
+summary(generator())
+```
+
+```{r}
+discriminator <- function(dim = 1) {
+  model <- keras_model_sequential(input_shape = dim, name = "seq_disc") |> 
+    layer_dense(units = 32, activation = "relu") |>
+    layer_dense(units = 16, activation = "relu") |>
+    layer_dense(units = 1, activation = "sigmoid")
+}
+
+summary(discriminator())
+```
+
+```{r}
+latent_dim <- as.integer(1)
+nsyn <- nrow(train_dat)
+
+mod <- gan(
+  discriminator = discriminator(dim = ncol(train_dat)), 
+  generator = generator(latent_dim = latent_dim), 
+  latent_dim = latent_dim
+)
+
+mod |>
+  compile(
+    d_optimizer = optimizer_adam(beta_1 = 0.5),
+    g_optimizer = optimizer_adam(beta_1 = 0.5),
+    loss_fn = loss_binary_crossentropy()
+  )
+
+
+plot(
+  density(train_dat), 
+  ylim = c(0, 0.2), 
+  col = "darkorange2",
+  xlab = "x",
+  main = "GAN Training"
+)
+curve(0.5 * dnorm(x, 2, 1) + 0.5 * dnorm(x, 8, 2), add = TRUE, lty = 2)
+
+
+for (i in 1:5) {
+  mod |>
+    fit(train_dat, epochs = 100, batch_size = 32, verbose = 0)
+  newdat <- mod$generator(tf$random$normal(shape = c(nsyn, latent_dim)))
+  lines(density(as.matrix(newdat)), 
+        col = RColorBrewer::brewer.pal(6, "Greens")[i])
+}
+```
+
+
+
+
+
+
