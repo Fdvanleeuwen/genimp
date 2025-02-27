@@ -465,7 +465,7 @@ $$
 f(x_1, x_2) = \mathcal{N}(x_1; 2, 2) \times \mathcal{N}(x_2; \sin(2x_1), 0.1).
 $$
 ```{r}
-#| label: sin-data
+#| label: fig-sin-data
 #| fig-cap: "Realized training data (orange points) and the true data generating distribution (black line)."
 
 x1 <- rnorm(N, 2, 2)
@@ -475,7 +475,7 @@ plot(x1, x2, col = "darkorange2")
 curve(sin(2*x), add = TRUE)
 ```
 
-@sin-data shows the realized training data (orange points) and the conditional expectation $\mathbb{E}(x_2|x_1)$ true data generating distribution (black line). We can now train a GAN on this data generating distribution. We start by defining the generator and discriminator architectures.
+@fig-sin-data shows the realized training data (orange points) and the conditional expectation $\mathbb{E}(x_2|x_1)$ true data generating distribution (black line). We can now train a GAN on this data generating distribution. We start by defining the generator and discriminator architectures.
 
 ```{r}
 #| label: sin-generator

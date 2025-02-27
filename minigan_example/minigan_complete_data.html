@@ -68,6 +68,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="minigan_complete_data_files/libs/bootstrap/bootstrap.min.js"></script>
 <link href="minigan_complete_data_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
 <link href="minigan_complete_data_files/libs/bootstrap/bootstrap.min.css" rel="stylesheet" id="quarto-bootstrap" data-mode="light">
+<link href="minigan_complete_data_files/libs/htmltools-fill-0.5.8.1/fill.css" rel="stylesheet">
+
 <script src="minigan_complete_data_files/libs/htmlwidgets-1.6.4/htmlwidgets.js"></script>
 
 <script src="minigan_complete_data_files/libs/viz-1.8.2/viz.js"></script>
@@ -171,8 +173,8 @@ window.Quarto = {
 <div id="fig-gan" class="cell-output-display quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
 <div aria-describedby="fig-gan-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<div class="grViz html-widget html-fill-item" id="htmlwidget-0544f2c6b61bbad79e75" style="width:100%;height:464px;"></div>
-<script type="application/json" data-for="htmlwidget-0544f2c6b61bbad79e75">{"x":{"diagram":"digraph {\n  graph [layour = dot, rankdir = LR]\n  \n  node [shape = rectangle, style = filled, fillcolor = lightblue]\n  N1 [label = \"Random noise\"]\n  N2 [label = \"Generator\"]\n  N3 [label = \"Synthetic data\"]\n  N4 [label = \"Discriminator\"]\n\n  N1 -> N2 -> N3 -> N4 -> N2\n}","config":{"engine":"dot","options":null}},"evals":[],"jsHooks":[]}</script>
+<div class="grViz html-widget html-fill-item" id="htmlwidget-51281c3ff49521d984b6" style="width:100%;height:464px;"></div>
+<script type="application/json" data-for="htmlwidget-51281c3ff49521d984b6">{"x":{"diagram":"digraph {\n  graph [layour = dot, rankdir = LR]\n  \n  node [shape = rectangle, style = filled, fillcolor = lightblue]\n  N1 [label = \"Random noise\"]\n  N2 [label = \"Generator\"]\n  N3 [label = \"Synthetic data\"]\n  N4 [label = \"Discriminator\"]\n\n  N1 -> N2 -> N3 -> N4 -> N2\n}","config":{"engine":"dot","options":null}},"evals":[],"jsHooks":[]}</script>
 </div>
 <figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-gan-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 Figure&nbsp;1: Graphical representation of a GAN.
@@ -732,15 +734,19 @@ f(x_1, x_2) = \mathcal{N}(x_1; 2, 2) \times \mathcal{N}(x_2; \sin(2x_1), 0.1).
 <span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(x1, x2, <span class="at">col =</span> <span class="st">"darkorange2"</span>)</span>
 <span id="cb32-5"><a href="#cb32-5" aria-hidden="true" tabindex="-1"></a><span class="fu">curve</span>(<span class="fu">sin</span>(<span class="dv">2</span><span class="sc">*</span>x), <span class="at">add =</span> <span class="cn">TRUE</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
-<div class="quarto-figure quarto-figure-center">
-<figure class="figure">
-<p><img src="minigan_complete_data_files/figure-html/sin-data-1.png" class="img-fluid figure-img" width="672"></p>
-<figcaption>Realized training data (orange points) and the true data generating distribution (black line).</figcaption>
+<div id="fig-sin-data" class="quarto-float quarto-figure quarto-figure-center anchored">
+<figure class="quarto-float quarto-float-fig figure">
+<div aria-describedby="fig-sin-data-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<img src="minigan_complete_data_files/figure-html/fig-sin-data-1.png" class="img-fluid figure-img" width="672">
+</div>
+<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-sin-data-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Figure&nbsp;9: Realized training data (orange points) and the true data generating distribution (black line).
+</figcaption>
 </figure>
 </div>
 </div>
 </div>
-<p><span class="citation" data-cites="sin-data">@sin-data</span> shows the realized training data (orange points) and the conditional expectation <span class="math inline">\(\mathbb{E}(x_2|x_1)\)</span> true data generating distribution (black line). We can now train a GAN on this data generating distribution. We start by defining the generator and discriminator architectures.</p>
+<p><a href="#fig-sin-data" class="quarto-xref">Figure&nbsp;9</a> shows the realized training data (orange points) and the conditional expectation <span class="math inline">\(\mathbb{E}(x_2|x_1)\)</span> true data generating distribution (black line). We can now train a GAN on this data generating distribution. We start by defining the generator and discriminator architectures.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb33"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>generator <span class="ot">&lt;-</span> <span class="cf">function</span>(<span class="at">latent_dim =</span> <span class="dv">1</span>) {</span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>  model <span class="ot">&lt;-</span> <span class="fu">keras_model_sequential</span>(<span class="at">input_shape =</span> latent_dim, <span class="at">name =</span> <span class="st">"seq_gen"</span>) <span class="sc">|&gt;</span> </span>
@@ -837,13 +843,13 @@ f(x_1, x_2) = \mathcal{N}(x_1; 2, 2) \times \mathcal{N}(x_2; \sin(2x_1), 0.1).
 <img src="minigan_complete_data_files/figure-html/fig-sin-gan-training-1.png" class="img-fluid figure-img" width="672">
 </div>
 <figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-sin-gan-training-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Figure&nbsp;9: Training data (orange points) and the generated synthetic data (green points) after 100, 500, 900, and 2500 epochs, including the true model (black line).
+Figure&nbsp;10: Training data (orange points) and the generated synthetic data (green points) after 100, 500, 900, and 2500 epochs, including the true model (black line).
 </figcaption>
 </figure>
 </div>
 </div>
 </div>
-<p><a href="#fig-sin-gan-training" class="quarto-xref">Figure&nbsp;9</a> shows the training data (orange points) and a realization of the synthetic data model after 100, 500, 900, and 2500 epochs (green points), including the conditional expectation of <span class="math inline">\(x_2\)</span> given <span class="math inline">\(x_1\)</span>. The figure shows that the model slowly converges towards the real data distribution, although there seems to be some bias in some areas of the distribution. Also, the variance seems to be slightly underestimated in the synthetic data. Nevertheless, without providing any information about the true model, the synthetic data distribution is quite close to the true data generating distribution.</p>
+<p><a href="#fig-sin-gan-training" class="quarto-xref">Figure&nbsp;10</a> shows the training data (orange points) and a realization of the synthetic data model after 100, 500, 900, and 2500 epochs (green points), including the conditional expectation of <span class="math inline">\(x_2\)</span> given <span class="math inline">\(x_1\)</span>. The figure shows that the model slowly converges towards the real data distribution, although there seems to be some bias in some areas of the distribution. Also, the variance seems to be slightly underestimated in the synthetic data. Nevertheless, without providing any information about the true model, the synthetic data distribution is quite close to the true data generating distribution.</p>
 </section>
 <section id="conclusion-1" class="level2">
 <h2 class="anchored" data-anchor-id="conclusion-1">Conclusion</h2>
