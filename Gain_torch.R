@@ -2,13 +2,15 @@
 library(torch)
 library(mice)
 library(MASS)
+library(transport)
+library(patchwork)
 
-
-df = MASS::mvrnorm(n = 100, mu = c(0,0), Sigma = matrix(c(1, 0.8, 0.8, 1), ncol = 2, nrow = 2))
+set.seed(123)
+df = MASS::mvrnorm(n = 250, mu = c(0,0), Sigma = matrix(c(1, 0.8, 0.8, 1), ncol = 2, nrow = 2))
 
 # add some missing values
-df_miss = mice::ampute(df)
-
+df_miss = mice::ampute(df, mech = "MCAR")
+dim(df_miss)
 # Data matrix
 df_data = df_miss$amp %>% 
   replace(is.na(.), 0)
@@ -31,6 +33,29 @@ df_mask_tens = torch_tensor(df_mask)
 
 # this is the input for the generator
 gen_inp = torch_cat(list(df_combine_tens, df_mask_tens), dim = 2)
+
+df_rand_func <- function(df_miss){
+  df_rand = df_miss %>% 
+    replace(!is.na(.), 0) %>% 
+    replace(is.na(.), rnorm(n = sum(is.na(df_miss))))
+  
+  return(torch_tensor(df_rand))
+}
+
+df_miss_func <- function(df, prop) {
+  df_miss = mice::ampute(df, prop = prop)
+  
+  # Data matrix
+  df_data = df_miss$amp %>% 
+    replace(is.na(.), 0)
+  
+  # mask matix
+  df_mask = df_miss$amp %>%
+    replace(!is.na(.), 1) %>% 
+    replace(is.na(.), 0)
+  
+  return(list(df_amp = df_miss$amp,df_miss_clean = torch_tensor(df_data), df_mask = torch_tensor(df_mask)))
+}
 
 # This function generates a "hint matrix," typically used in data imputation algorithms.
 # The matrix is binary, indicating whether a value is included in the hint.
@@ -72,7 +97,7 @@ gen <- nn_module(
       nnf_relu() |>
       self$fc2() |>
       nnf_relu() |>
-      self$fc3()  # Sigmoid activation for stardardised data
+      self$fc3()  # add Sigmoid activation for standardized data
   }
 )
 
@@ -105,44 +130,37 @@ G_loss <- function(mask, D_pred, G_input, G_pred, alpha){
   # Loss term for fooling the discriminator
   G_loss_temp <- -torch_mean((1 - mask) * torch_log(D_pred + 1e-8))
   
-  # Mean squared error (MSE) for observed data
   MSE_loss <- torch_mean((mask * G_input - mask * G_pred)**2) / torch_mean(mask)
-  
-  # Total generator loss
-  G_loss_temp + alpha * MSE_loss
+    
+  G_loss_temp + alpha * MSE_loss 
+
 }
 
-# check the generator
-# First, create an instance of the generator
-#input_dim <- dim(gen_inp)[2]  
-#hidden_dim <- 4  
+G_loss_wass <- function(mask, D_pred, G_input, G_pred, alpha){
+  
+  # Loss term for fooling the discriminator
+  G_loss_temp <- -torch_mean((1 - mask) * torch_log(D_pred + 1e-8))
+  
+  # Mean squared error (MSE) for observed data
+  real <- pp(as_array(mask * G_input))
+  pred <- pp(as_array(mask * G_pred))
+  
+  wd = wasserstein(real,pred,p=1)
+  
+  G_loss_temp + alpha * wd 
+}
 
-# Initialize the generator
-#generator <- gen(input_dim, hidden_dim)
-
-# Make a forward pass
-#output <- generator(gen_inp)
-
-# Now 'output' contains the generated data
-# The shape should be [batch_size, input_dim/2]
-#print(output$shape)
-
-# check the discriminator
-# First, create an instance of the discriminator
-#input_dim_d <- output$shape[2]
-
-# Initialize the discriminator
-#discriminator <- discrim(input_dim_d, hidden_dim)
-
-#output_D <- discriminator(output)
-#output_D$shape
-
-# now the loss functions
-#G_loss(mask = df_mask_tens, D_pred = output_D, G_input = df_combine_tens, G_pred = output, alpha = 1)
-#D_loss(mask = df_mask_tens, D_pred = output_D)
-
-
-# This seems to work, now we need to train the model
+Var_covar_loss <- function(real_data, G_output, mask){
+  real_data_no_miss = real_data %>% 
+    na.omit() %>% 
+    data.frame()
+  
+  cov_real = cov(real_data_no_miss)
+  
+  cov_G = cov(G_output)
+  
+  return(torch_mean((cov_real - cov_G)^2))
+}
 
 # Initialize the gen/discrim
 input_dim <- dim(gen_inp)[2]  
@@ -153,7 +171,7 @@ generator <- gen(input_dim, hidden_dim)
 discriminator <- discrim(input_dim_d, hidden_dim)
 
 # We need to define the optimizer
-g_optimizer <- optim_adam(generator$parameters, lr = 0.001, betas = c(0.5, 0.999))
+g_optimizer <- optim_adam(generator$parameters, lr = 0.005, betas = c(0.5, 0.999))
 d_optimizer <- optim_adam(discriminator$parameters, lr = 0.001, betas = c(0.5, 0.999))
   
 n_iter = 1000
@@ -163,15 +181,31 @@ G_loss_all = c()
 # training the model
 
 for (i in 1:n_iter){
+  
+  # induce random missing data
+  #df_miss_mask = df_miss_func(df, prop = 0.5)
+  #df_mask_tens = df_miss_mask$df_mask
+  
+  # generate new random data
+  df_rand_tens = df_rand_func(df_miss$amp)
+  df_combine_tens = df_data_tens + df_rand_tens
+  
+  gen_inp = torch_cat(list(df_combine_tens, df_mask_tens), dim = 2)
+  
+  # generate new hint matrix
+  hint_mat = torch_tensor(hint_matrix(hint_rate = 0.05, no = nrow(df_mask_tens), dim = ncol(df_mask_tens)))
+  
   # DISCRIMINATOR STEP
   d_optimizer$zero_grad()
   
   # Generate fake data
   output_G <- generator(gen_inp)
   
-  # add hint matrix
+  # add the imputations to the real data
+  df_real_with_G = df_data_tens + output_G$detach() * (1 -df_mask_tens)
   
-  D_input = torch_cat(list(output_G$detach(), hint_mat), dim = 2)
+  # add hint matrix
+  D_input = torch_cat(list(df_real_with_G, hint_mat), dim = 2)
   
   # Discriminator predictions on fake data
   fake_pred <- discriminator(D_input)  # Detach to avoid backprop through generator
@@ -197,6 +231,11 @@ for (i in 1:n_iter){
   g_loss_val <- G_loss(mask = df_mask_tens, D_pred = output_D, 
                        G_input = df_combine_tens, G_pred = output_G, alpha = 1)
   
+  # add extra loss term
+  #covar_loss = Var_covar_loss(df_miss$amp, as_array(output_G))
+  #g_loss_val = g_loss_val + covar_loss
+  
+  
   # Back prop and optimization for generator
   g_loss_val$backward()
   g_optimizer$step()
@@ -219,7 +258,10 @@ sum(((1 - df_mask) * df - (1 - df_mask) * output_G)^2) / sum(1 - df_mask)
 
 # plot the missing vs real data
 real = df * (1 - df_mask)
-imputed = as_array((1 - df_mask) * output_G)
+imputed = df_data + as_array((1 - df_mask) * output_G)
+
+cov(df)
+cov(imputed)
 
 helper_missing = data.frame(df_mask) %>% 
   mutate(miss_ind = case_when(X1 == 1 & X2 == 1 ~ "None",
@@ -229,27 +271,26 @@ helper_missing = data.frame(df_mask) %>%
 
 df_plot = data.frame(real_x1 = df[,1],
                      real_x2 =df[,2],
-                     imputed_x1 = as_array(output_G)[,1],
-                     imputed_x2 = as_array(output_G)[,2]) %>% 
+                     imputed_x1 = imputed[,1],
+                     imputed_x2 = imputed[,2]) %>% 
   mutate(miss_ind = helper_missing$miss_ind)
 
 p1 = df_plot %>% 
   ggplot(aes(x = real_x1, y = real_x2)) +
-  geom_point(aes(color = miss_ind)) +
+  geom_point(aes(color = miss_ind), alpha = 0.7) +
   theme_minimal() + 
   labs(x = "X1", y = "X2", title = "Real and masked data") 
 
 p2 = df_plot %>% 
   ggplot(aes(x = imputed_x1, y = imputed_x2)) +
-  geom_point(aes(color = miss_ind)) +  
+  geom_point(aes(color = miss_ind), alpha = 0.7) +  
   theme_minimal() + 
   labs(x = "X1", y = "X2", title = "Real and Imputed data")
 
-library(patchwork)
-
-p1 + p2 +plot_layout(guides = "collect") & theme(legend.position = 'bottom')
+p1 + p2 + plot_layout(guides = "collect") & theme(legend.position = 'bottom')
 
 # TO DO
+# generate new random values for each iteration
 # mini batch
 # Normalization
 # initialization
@@ -257,4 +298,19 @@ p1 + p2 +plot_layout(guides = "collect") & theme(legend.position = 'bottom')
 # add real data to discriminator loss?
 
 
+# wasserstein distance
 
+x <- pp(matrix(runif(500),250,2))
+y <- pp(matrix(runif(500),250,2))
+wasserstein(x,y,p=1)
+wasserstein(x,y,p=2)
+
+# try out MI, look at coverage
+
+# upweight the samples which have a high prob of being missing. 
+
+# distance between the ouput of the last hidden layer of gen.
+
+# Calc the MSE per variable and add the noise back
+
+# Look at the MSE for similair ppl (euclician distance) and add the noise after imp. 
